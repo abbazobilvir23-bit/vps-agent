@@ -218,10 +218,21 @@ def chunk(text: str) -> list[str]:
     return parts
 
 
-def send(chat: str, text: str, menu: bool = False) -> int | None:
-    payload = {"chat_id": chat, "text": text, "disable_web_page_preview": "true"}
-    if menu:
-        payload["reply_markup"] = json.dumps({"inline_keyboard": KEYBOARD}, ensure_ascii=False)
+def _markup(inline=None, reply=None) -> str | None:
+    """inline — кнопки под сообщением; reply — постоянная нижняя клавиатура."""
+    if inline is not None:
+        return json.dumps({"inline_keyboard": inline}, ensure_ascii=False)
+    if reply is not None:
+        return json.dumps({"keyboard": reply, "resize_keyboard": True,
+                           "is_persistent": True}, ensure_ascii=False)
+    return None
+
+
+def send(chat: str, text: str, inline=None, reply=None) -> int | None:
+    payload = {"chat_id": chat, "text": text[:MAX_TG], "disable_web_page_preview": "true"}
+    mk = _markup(inline, reply)
+    if mk:
+        payload["reply_markup"] = mk
     res = api("sendMessage", payload)
     if res.get("ok"):
         return res.get("result", {}).get("message_id")
@@ -229,13 +240,25 @@ def send(chat: str, text: str, menu: bool = False) -> int | None:
     return None
 
 
-def edit(chat: str, msg_id: int | None, text: str, menu: bool = False) -> None:
+def edit(chat: str, msg_id: int | None, text: str, inline=None) -> None:
     if not msg_id:
         return
-    payload = {"chat_id": chat, "message_id": msg_id, "text": text[:MAX_TG]}
-    if menu:
-        payload["reply_markup"] = json.dumps({"inline_keyboard": KEYBOARD}, ensure_ascii=False)
+    payload = {"chat_id": chat, "message_id": msg_id, "text": text[:MAX_TG],
+               "disable_web_page_preview": "true"}
+    mk = _markup(inline, None)
+    if mk:
+        payload["reply_markup"] = mk
     api("editMessageText", payload)
+
+
+def typing(chat: str) -> None:
+    api("sendChatAction", {"chat_id": chat, "action": "typing"})
+
+
+def typing_loop(chat: str, stop: threading.Event) -> None:
+    while not stop.is_set():
+        typing(chat)
+        stop.wait(5)
 
 
 def answer_cb(cb_id: str, text: str = "") -> None:
@@ -247,65 +270,133 @@ def answer_cb(cb_id: str, text: str = "") -> None:
 
 # ----------------------------------------------------------------------------- меню и тексты
 
-KEYBOARD = [
-    [{"text": "💬 Поговорить", "callback_data": "mode_chat"},
-     {"text": "🛠 Задача по коду", "callback_data": "mode_task"}],
-    [{"text": "📊 Статус", "callback_data": "status"},
-     {"text": "🔄 Новый диалог", "callback_data": "new"}],
-    [{"text": "⏹ Остановить", "callback_data": "stop"},
-     {"text": "❓ Помощь", "callback_data": "help"}],
+BTN_CHAT = "💬 Общение"
+BTN_TASK = "🛠 Код"
+BTN_STATUS = "📊 Статус"
+BTN_SETTINGS = "⚙️ Настройки"
+BTN_HELP = "❓ Помощь"
+
+# Постоянная клавиатура внизу — основная навигация.
+REPLY_KEYBOARD = [
+    [{"text": BTN_CHAT}, {"text": BTN_TASK}],
+    [{"text": BTN_STATUS}, {"text": BTN_SETTINGS}],
+    [{"text": BTN_HELP}],
 ]
 
+
+def inline_home(chat: str) -> list[list[dict]]:
+    st = STORE.get(chat)
+    mode = st.get("mode", MODE_CHAT)
+    def lbl(prefix: str, m: str) -> str:
+        return ("✅ " if mode == m else "") + prefix
+    return [
+        [{"text": lbl("💬 Общение", MODE_CHAT), "callback_data": "mode_chat"},
+         {"text": lbl("🛠 Код", MODE_TASK), "callback_data": "mode_task"}],
+        [{"text": "📊 Статус", "callback_data": "status"},
+         {"text": "🔄 Новый диалог", "callback_data": "new"}],
+        [{"text": "🩺 Диагностика", "callback_data": "diag"},
+         {"text": "❓ Помощь", "callback_data": "help"}],
+    ]
+
+
+CMD_LIST = [
+    ("start", "🏠 Главное меню"),
+    ("chat", "💬 Режим общения"),
+    ("task", "🛠 Режим кода"),
+    ("status", "📊 Статус и текущий диалог"),
+    ("new", "🔄 Начать заново"),
+    ("stop", "⏹ Остановить работу"),
+    ("diag", "🩺 Диагностика"),
+    ("help", "❓ Помощь"),
+]
+
+BOT_DESCRIPTION = (
+    "Личный ИИ-агент на твоём сервере. Отвечает на любые вопросы, ищет информацию "
+    "в интернете, читает файлы и пишет код в изолированной песочнице. Каждое "
+    "изменение кода фиксируется в git и откатывается одной командой."
+)
+BOT_SHORT_DESCRIPTION = "Личный ИИ-агент: вопросы, интернет, код в песочнице."
+
+
+def register_bot() -> None:
+    """Команды в меню «/», описание бота и кнопка меню — как у топовых ботов."""
+    res = api("setMyCommands", {"commands": json.dumps(CMD_LIST, ensure_ascii=False)})
+    log("меню команд: " + ("обновлено" if res.get("ok") else f"не вышло ({res.get('description')})"))
+    api("setMyDescription", {"description": BOT_DESCRIPTION})
+    api("setMyShortDescription", {"short_description": BOT_SHORT_DESCRIPTION})
+    api("setChatMenuButton", {"menu_button": json.dumps({"type": "commands"})})
+
+
 TXT_START = (
-    "👋 Привет! Я — твой персональный агент на этом сервере.\n\n"
-    "Что я умею:\n"
-    "• отвечать на вопросы по любой теме и искать информацию в интернете;\n"
-    "• читать и разбирать файлы твоей рабочей папки;\n"
-    "• писать и править код, а затем показывать, что изменилось.\n\n"
-    "Чего не умею (и не буду делать): ломать сервер, трогать VPN, "
-    "торгового бота и системные настройки, запускать код в консоли.\n\n"
-    "Выбери режим кнопкой ниже или просто напиши сообщение."
+    "🤖 <b>Твой личный ИИ-агент</b>\n"
+    "Работает прямо на сервере, никуда твои данные не уходят.\n\n"
+    "<b>Что умею</b>\n"
+    "🌐 Находить информацию в интернете\n"
+    "📂 Читать файлы рабочей папки\n"
+    "🛠 Писать и править код\n"
+    "🧠 Рассуждать на любые темы\n\n"
+    "<b>Два режима</b>\n"
+    "💬 <b>Общение</b> — отвечаю, читаю, ищу. Ничего не меняю.\n"
+    "🛠 <b>Код</b> — создаю и правлю файлы, каждое изменение в git.\n\n"
+    "Выбери режим кнопкой внизу или просто напиши сообщение."
 )
 
 TXT_HELP = (
-    "❓ <b>Как со мной работать</b>\n\n"
-    "<b>Команды</b>\n"
-    "/start — это меню\n"
-    "/help — эта справка\n"
-    "/status — состояние: режим, диалог, последние коммиты\n"
-    "/new — начать диалог с чистого листа\n"
-    "/stop — прервать текущую работу\n"
-    "/chat — переключиться в режим общения\n"
-    "/task — переключиться в режим задач по коду\n"
-    "/who — что я умею и чего не умею\n\n"
+    "❓ <b>Помощь</b>\n\n"
     "<b>Режимы</b>\n"
-    "💬 Поговорить — отвечаю на вопросы, читаю файлы, ищу в интернете. "
-    "Ничего не меняю на сервере.\n"
-    "🛠 Задача по коду — могу создавать и править файлы в рабочей папке. "
-    "Каждое изменение фиксируется в git, можно откатить.\n\n"
-    "<b>Очередь</b>\n"
-    "Работаю по одной задаче. Если отправить несколько сообщений подряд, "
-    "остальные встанут в очередь — дождись ответа на первое.\n\n"
-    "<b>Честно про модели</b>\n"
-    "Сейчас я работаю на бесплатной модели. Для сложного кода качество "
-    "ниже, чем у платных — если нужно качественнее, скажи, переключу."
+    "💬 <b>Общение</b> — просто разговор. Могу читать файлы и искать в интернете,\n"
+    "   но ничего не меняю на сервере.\n"
+    "🛠 <b>Код</b> — создаю и правлю файлы в рабочей папке. После каждой задачи\n"
+    "   делаю коммит, поэтому любой результат откатывается.\n\n"
+    "<b>Кнопки внизу</b>\n"
+    "💬 Общение · 🛠 Код — переключить режим\n"
+    "📊 Статус — что сейчас происходит\n"
+    "⚙️ Настройки — модель, диалог\n"
+    "❓ Помощь — эта справка\n\n"
+    "<b>Команды</b>\n"
+    "/start — меню\n"
+    "/chat — режим общения | /task — режим кода\n"
+    "/status — состояние | /new — новый диалог\n"
+    "/stop — остановить | /diag — диагностика\n\n"
+    "<b>Полезно знать</b>\n"
+    "• Работаю по одной задаче. Если прислать несколько сообщений подряд,\n"
+    "  остальные встанут в очередь.\n"
+    "• Сложная задача может занять минуту-две — я показываю «печатает».\n"
+    "• Я не помню прошлые разговоры вне текущего диалога.\n"
+    "• Работаю на бесплатной модели: иногда провайдер перегружен и я\n"
+    "  переключаюсь на резервную — ответ будет, но чуть дольше."
 )
 
 TXT_WHO = (
-    "🤖 <b>Что я умею</b>\n\n"
-    "✅ Отвечать на вопросы по любым темам\n"
-    "✅ Искать информацию в интернете (есть webfetch и поиск)\n"
-    "✅ Читать и анализировать файлы рабочей папки\n"
-    "✅ Писать, править и рефакторить код\n"
-    "✅ Показывать список изменённых файлов и делать коммит\n\n"
-    "🚫 Чего не делаю принципиально:\n"
-    "• не выхожу за пределы своей рабочей папки\n"
-    "• не трогаю торгового бота, VPN, Docker, systemd, сеть\n"
-    "• не запускаю код в консоли (нельзя проверить программу сам)\n"
-    "• не храню и не вывожу ключи и пароли\n\n"
-    "ℹ️ Я не помню прошлые разговоры — только то, что лежит в папке и "
-    "текущий диалог. Начни новый диалог кнопкой «Новый диалог», если нужна чистая тема."
+    "🤖 <b>Что я умею и чего не делаю</b>\n\n"
+    "✅ Отвечаю на вопросы по любым темам\n"
+    "✅ Ищу информацию в интернете\n"
+    "✅ Читаю и разбираю файлы рабочей папки\n"
+    "✅ Пишу, правлю и рефакторю код\n"
+    "✅ Делаю коммит и показываю, что изменилось\n\n"
+    "🚫 Не выхожу за пределы своей папки\n"
+    "🚫 Не трогаю торгового бота, VPN, Docker, systemd, сеть\n"
+    "🚫 Не запускаю код в консоли\n"
+    "🚫 Не храню и не вывожу ключи и пароли\n\n"
+    "ℹ️ Я не помню прошлые разговоры вне текущего диалога.\n"
+    "Кнопка «🔄 Новый диалог» сбрасывает контекст."
 )
+
+
+def txt_settings(chat: str) -> str:
+    st = STORE.get(chat)
+    mode = "💬 Общение" if st.get("mode", MODE_CHAT) == MODE_CHAT else "🛠 Код"
+    models = agent_models()
+    extra = f" (+{len(models) - 1} резервных)" if len(models) > 1 else ""
+    sess = st.get("session") or "новый"
+    return (
+        "⚙️ <b>Настройки</b>\n\n"
+        f"Режим: <b>{mode}</b>\n"
+        f"Модель: <code>{models[0].split('/')[-1]}</code>{extra}\n"
+        f"Диалог: <code>{sess}</code>\n"
+        f"Очередь: {len(st.get('queue') or [])}\n\n"
+        "<i>Модель меняется в файле на сервере — скажи, если нужно.</i>"
+    )
 
 
 def txt_diag(chat: str) -> str:
@@ -547,6 +638,8 @@ def handle_prompt(chat: str, prompt: str) -> None:
             head = "\U0001f4ac Общаюсь" if mode == MODE_CHAT else "\U0001f6e0 Работаю"
             msg_id = send(chat, f"{head}…\n<i>Запрос принят. Сложная задача может "
                                 f"занять минуту-две.</i>")
+            typer = threading.Event()
+            threading.Thread(target=typing_loop, args=(chat, typer), daemon=True).start()
             buf, error, last_send, used = "", None, time.time(), ""
             for kind, val in stream_agent(chat, prompt, mode, session):
                 if kind == "text":
@@ -576,6 +669,10 @@ def handle_prompt(chat: str, prompt: str) -> None:
         except Exception:  # noqa: BLE001
             pass
     finally:
+        try:
+            typer.set()
+        except Exception:  # noqa: BLE001
+            pass
         STORE.set(chat, busy=False)
         _start_next(chat)
 
@@ -632,30 +729,39 @@ def stop(chat: str) -> str:
 
 def on_text(chat: str, text: str) -> None:
     low = text.strip().lower()
-    if low in ("/start", "старт", "начать", "/menu", "меню"):
-        send(chat, TXT_START, menu=True)
+    # кнопки нижней клавиатуры
+    if text.strip() in (BTN_CHAT,) or low in ("/start", "/menu", "меню", "🏠"):
+        if text.strip() == BTN_CHAT:
+            on_callback(chat, "mode_chat")
+            return
+        send(chat, TXT_START, reply=REPLY_KEYBOARD)
+        send(chat, "Выбери режим 👇", inline=inline_home(chat))
+    elif text.strip() == BTN_TASK:
+        on_callback(chat, "mode_task")
+    elif text.strip() == BTN_STATUS:
+        on_callback(chat, "status")
+    elif text.strip() == BTN_SETTINGS:
+        on_callback(chat, "settings")
+    elif text.strip() == BTN_HELP:
+        on_callback(chat, "help")
     elif low in ("/help", "помощь", "/помощь"):
-        send(chat, TXT_HELP, menu=True)
+        send(chat, TXT_HELP, reply=REPLY_KEYBOARD)
     elif low in ("/who", "/кто", "что ты умеешь"):
         send(chat, TXT_WHO)
     elif low in ("/diag", "/диаг", "диагностика"):
         send(chat, txt_diag(chat))
-    elif low in ("/status", "статус", "/статус"):
-        send(chat, txt_status(chat), menu=True)
+    elif low in ("/status", "/статус"):
+        on_callback(chat, "status")
+    elif low in ("/settings", "/настройки", "настройки"):
+        on_callback(chat, "settings")
     elif low in ("/new", "/новая", "новый диалог"):
-        STORE.drop_session(chat)
-        send(chat, "🔄 Начинаю новый диалог. Память прошлого разговора сброшена.\n\n"
-                   "С чем работаем?", menu=True)
-    elif low in ("/stop", "стоп", "хватит", "/отмена"):
+        on_callback(chat, "new")
+    elif low in ("/stop", "/отмена", "стоп", "хватит"):
         send(chat, stop(chat))
-    elif low in ("/chat", "/общение", "общение", "поговорить"):
-        STORE.set(chat, mode=MODE_CHAT)
-        send(chat, "💬 Режим общения включён. Задавай вопросы обычным сообщением.\n"
-                   "Файлы не меняю, консоль не трогаю, в интернете искать могу.", menu=True)
-    elif low in ("/task", "/задача", "задача", "код"):
-        STORE.set(chat, mode=MODE_TASK)
-        send(chat, "🛠 Режим задач по коду включён. Опиши задачу.\n"
-                   "Каждое изменение попадёт в git — откатить можно всегда.", menu=True)
+    elif low in ("/chat", "/общение"):
+        on_callback(chat, "mode_chat")
+    elif low in ("/task", "/задача", "/код"):
+        on_callback(chat, "mode_task")
     else:
         enqueue(chat, text)
 
@@ -663,20 +769,34 @@ def on_text(chat: str, text: str) -> None:
 def on_callback(chat: str, data: str) -> None:
     if data == "mode_chat":
         STORE.set(chat, mode=MODE_CHAT)
-        answer_cb("", "")
-        send(chat, "💬 Режим общения. Спрашивай что угодно.", menu=True)
+        send(chat, "💬 <b>Режим общения</b>\n"
+                   "Отвечаю на вопросы, читаю файлы, ищу в интернете. "
+                   "Ничего на сервере не меняю.\n\nЗадавай вопрос 👇",
+             inline=inline_home(chat))
     elif data == "mode_task":
         STORE.set(chat, mode=MODE_TASK)
-        send(chat, "🛠 Режим задач. Опиши, что нужно сделать.", menu=True)
+        send(chat, "🛠 <b>Режим кода</b>\n"
+                   "Создаю и правлю файлы в рабочей папке. Каждая задача — "
+                   "отдельный коммит, откат всегда возможен.\n\nОпиши задачу 👇",
+             inline=inline_home(chat))
     elif data == "status":
-        send(chat, txt_status(chat), menu=True)
+        send(chat, txt_status(chat), inline=inline_home(chat))
+    elif data == "settings":
+        send(chat, txt_settings(chat), inline=[
+            [{"text": "🔄 Новый диалог", "callback_data": "new"},
+             {"text": "🩺 Диагностика", "callback_data": "diag"}],
+            [{"text": "❓ Помощь", "callback_data": "help"}],
+        ])
     elif data == "new":
         STORE.drop_session(chat)
-        send(chat, "🔄 Новый диалог. С чего начнём?", menu=True)
+        send(chat, "🔄 <b>Новый диалог</b>\nПамять прошлого разговора сброшена.\n\n"
+                   "С чего начнём?", inline=inline_home(chat))
     elif data == "stop":
         send(chat, stop(chat))
+    elif data == "diag":
+        send(chat, txt_diag(chat))
     elif data == "help":
-        send(chat, TXT_HELP, menu=True)
+        send(chat, TXT_HELP, inline=inline_home(chat))
 
 
 # ----------------------------------------------------------------------------- главный цикл
@@ -803,6 +923,7 @@ def main() -> int:
             log(f"getMe не удался: {me.get('description')}")
         if me.get("ok"):
             drop_webhook("перед стартом опроса")
+            register_bot()
 
     def shutdown(_sig, _frm):
         log("завершаюсь")
@@ -837,14 +958,24 @@ def self_test() -> int:
             fails += 1
 
     # --- меню ---
-    check("меню: 6 кнопок в 3 рядах", len(KEYBOARD) == 3 and all(len(r) == 2 for r in KEYBOARD))
-    cyr = "".join(b["text"] for r in KEYBOARD for b in r)
+    cyr = "".join(b["text"] for r in REPLY_KEYBOARD for b in r)
+    check("нижняя клавиатура: 5 кнопок", sum(len(r) for r in REPLY_KEYBOARD) == 5)
     check("подписи кнопок на русском", all(w in cyr for w in
-          ("Поговорить", "Задача", "Статус", "Остановить", "Помощь")))
+          ("Общение", "Код", "Статус", "Настройки", "Помощь")))
     check("в подписях нет английских слов",
           not any(w in cyr for w in ("Start", "Help", "Status", "Chat", "Task", "Stop")))
+    for name in ("chat", "task", "status", "new", "diag", "help"):
+        rows = inline_home("0")
+    check("инлайн-меню: 3 ряда по 2 кнопки",
+          len(inline_home("0")) == 3 and all(len(r) == 2 for r in inline_home("0")))
+    cbs = [b["callback_data"] for r in inline_home("0") for b in r]
     check("callback_data — ASCII (требование Telegram)",
-          all(b["callback_data"].isascii() for r in KEYBOARD for b in r))
+          all(c.isascii() for c in cbs) and "mode_chat" in cbs and "stop" not in cbs)
+    check("команды для меню «/» на русском",
+          len(CMD_LIST) >= 6 and all(len(c) == 2 for c in CMD_LIST)
+          and all(any(ch in d for ch in "абвгдеёжзийклмнопрстуфхцчшщыэюя") for _, d in CMD_LIST))
+    check("описания бота в пределах лимитов",
+          len(BOT_DESCRIPTION) <= 512 and len(BOT_SHORT_DESCRIPTION) <= 120)
     check("все тексты в пределах лимита Telegram",
           all(len(t) <= MAX_TG for t in (TXT_START, TXT_HELP, TXT_WHO)))
 
@@ -880,7 +1011,7 @@ def self_test() -> int:
     # --- маршрутизация команд и кнопок (send перехватываем) ---
     real_send = globals()["send"]
     real_store = globals()["STORE"]
-    globals()["send"] = lambda chat, text, menu=False: (outbox.append(text), 1)[1]
+    globals()["send"] = lambda chat, text, inline=None, reply=None: (outbox.append(text), 1)[1]
     globals()["STORE"] = Store(tmp_state)   # изоляция: тест не трогает /root/agent
     try:
         for cmd, expect in (("/start", "меню"), ("/help", "Как со мной работать"),
@@ -938,6 +1069,18 @@ def self_test() -> int:
     globals()["STORE"] = real_store
     os.path.exists(tmp_state) and os.remove(tmp_state)
 
+    globals()["STORE"] = Store(tmp_state)
+    STORE.set("7", mode=MODE_CHAT)
+    home_chat = [b["text"] for r in inline_home("7") for b in r]
+    check("в инлайн-меню отмечен текущий режим (общение)",
+          any(t.startswith("✅") and "Общение" in t for t in home_chat))
+    STORE.set("7", mode=MODE_TASK)
+    home_task = [b["text"] for r in inline_home("7") for b in r]
+    check("отметка переезжает на режим кода",
+          any(t.startswith("✅") and "Код" in t for t in home_task))
+    globals()["STORE"] = real_store
+    os.path.exists(tmp_state) and os.remove(tmp_state)
+
     print(f"\n{'ВСЁ ОК' if not fails else str(fails) + ' ПРОВАЛОВ'}")
     return 1 if fails else 0
 
@@ -948,8 +1091,9 @@ def dry_run() -> int:
         os.rename(STATE_FILE, STATE_FILE + ".bak")
     sent: list[str] = []
 
-    def fake_send(chat: str, text: str, menu: bool = False):
-        sent.append(text)
+    def fake_send(chat: str, text: str, inline=None, reply=None):
+        tag = " [нижняя клавиатура]" if reply else (" [инлайн]" if inline else "")
+        sent.append(text + tag)
         return 1
 
     globals()["send"] = fake_send
