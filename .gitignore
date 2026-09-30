@@ -1,0 +1,8 @@
+env
+*.env
+agent.env
+session
+*.err
+__pycache__/
+workspace/.git/
+bridge/__pycache__/
