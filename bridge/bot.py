@@ -19,6 +19,7 @@ from __future__ import annotations
 import fcntl
 import json
 import os
+import random
 import shlex
 import signal
 import subprocess
@@ -68,6 +69,25 @@ ENV = load_env()
 TOKEN = ENV.get("TELEGRAM_BOT_TOKEN", "").strip()
 OC_BIN = ENV.get("OC") or os.path.expanduser("~/.opencode/bin/opencode")
 MODEL = ENV.get("MODEL") or "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
+# Бесплатные модели перегружены (503 provider_overloaded). Основная + запасные.
+_DEFAULT_MODELS = [
+    "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
+    "openrouter/nvidia/nemotron-3-super-120b-a12b:free",
+    "openrouter/inclusionai/ling-3.0-flash-sante:free",
+    "openrouter/nvidia/nemotron-3.5-lightning:free",
+    "openrouter/stealth/space-bunny-alpha",
+]
+
+
+def agent_models() -> list[str]:
+    raw = ENV.get("MODELS", "").strip()
+    models = [m.strip() for m in raw.split(",") if m.strip()] if raw else []
+    if MODEL and MODEL not in models:
+        models.insert(0, MODEL)
+    for m in _DEFAULT_MODELS:
+        if m not in models:
+            models.append(m)
+    return models
 OPENCODE_API_KEY = ENV.get("OPENROUTER_API_KEY", "").strip()
 
 
@@ -288,6 +308,53 @@ TXT_WHO = (
 )
 
 
+def txt_diag(chat: str) -> str:
+    """Факты о состоянии, а не догадки."""
+    lines = ["🩺 <b>Диагностика</b>", ""]
+    # opencode
+    try:
+        ver = subprocess.run([OC_BIN, "--version"], capture_output=True, text=True,
+                             timeout=30).stdout.strip() or "нет ответа"
+    except Exception as e:  # noqa: BLE001
+        ver = f"ОШИБКА {type(e).__name__}"
+    ok_bin = os.path.isfile(OC_BIN) and os.access(OC_BIN, os.X_OK)
+    lines.append(f"opencode: <code>{OC_BIN}</code>")
+    lines.append(f"  версия: {ver} | исполняемый: {'да' if ok_bin else 'НЕТ'}")
+    # ключи
+    lines.append(f"ключ OpenRouter: {'есть' if OPENCODE_API_KEY else 'НЕТ'}")
+    lines.append(f"токен Telegram: {'есть' if TOKEN else 'НЕТ'}")
+    # песочница
+    cfg = os.path.join(WS, "opencode.json")
+    try:
+        json.load(open(cfg, encoding="utf-8"))
+        cfg_ok, cfg_txt = "в порядке", ""
+    except Exception as e:  # noqa: BLE001
+        cfg_ok, cfg_txt = "НЕ КОРРЕКТЕН", f" ({type(e).__name__})"
+    lines.append(f"opencode.json: {cfg_ok}{cfg_txt}")
+    lines.append(f"рабочая папка: <code>{WS}</code>")
+    # состояние чата
+    st = STORE.get(chat)
+    lines.append(f"чат: busy={st.get('busy')} | в очереди {len(st.get('queue') or [])}")
+    lines.append(f"последний запрос: {st.get('last') or '—'}")
+    # что реально доехало до Telegram
+    wh = api("getWebhookInfo")
+    if wh.get("ok"):
+        r = wh["result"]
+        lines.append(f"webhook: {r.get('url') or 'нет'} | "
+                     f"в очереди Telegram: {r.get('pending_update_count')}")
+    # лог: последняя строка
+    try:
+        tail = subprocess.run(["tail", "-n", "1", LOG_FILE], capture_output=True,
+                              text=True, timeout=10).stdout.strip()
+        lines.append(f"лог: <code>{tail[-120:]}</code>")
+    except Exception:  # noqa: BLE001
+        pass
+    lines.append("")
+    lines.append("Если «opencode: НЕТ» или версия пустая — сломан агент, "
+                 "а не Telegram.")
+    return "\n".join(lines)
+
+
 def txt_status(chat: str) -> str:
     st = STORE.get(chat)
     mode = "💬 общение" if st["mode"] == MODE_CHAT else "🛠 задачи по коду"
@@ -314,12 +381,26 @@ def txt_status(chat: str) -> str:
 # ----------------------------------------------------------------------------- запуск агента
 
 
-def oc_args(mode: str, session: str) -> list[str]:
-    ver = subprocess.run([OC_BIN, "--version"], capture_output=True, text=True,
-                         timeout=30).stdout.strip()
-    major = "".join(ch for ch in ver if ch.isdigit())[:1] or "1"
-    base = (["--standalone"] if major.isdigit() and int(major) >= 2 else ["--pure"])
-    args = base + ["--auto", "--format", "json", "--model", MODEL]
+def oc_major() -> int:
+    try:
+        ver = subprocess.run([OC_BIN, "--version"], capture_output=True, text=True,
+                             timeout=30).stdout.strip()
+        digits = "".join(ch for ch in ver if ch.isdigit())
+        return int(digits[0]) if digits else 1
+    except Exception as e:  # noqa: BLE001
+        log(f"не смог определить версию opencode ({type(e).__name__}) — считаю v1")
+        return 1
+
+
+def oc_args(mode: str, session: str, model: str = "") -> list[str]:
+    if oc_major() >= 2:
+        # v2: своя сессия сервера
+        base = ["--standalone"]
+    else:
+        # v1: --port заставляет поднять СВОЙ сервер. Без него opencode цепляется
+        # к общему фоновому серверу и пишет файлы не в песочницу, а куда придётся.
+        base = ["--pure", "--port", str(random.randint(40000, 60000))]
+    args = base + ["--auto", "--format", "json", "--model", model or MODEL]
     if mode == MODE_CHAT:
         args += ["--agent", "chat"]
     if session:
@@ -327,11 +408,16 @@ def oc_args(mode: str, session: str) -> list[str]:
     return args
 
 
-def stream_agent(chat: str, prompt: str, mode: str, session: str):
-    """Запускает агента и отдаёт события: ('text', str) / ('session', id) / ('done'|'err', str)."""
+def _run_one(chat: str, prompt: str, mode: str, session: str, model: str):
+    """Один запуск opencode. Отдаёт события text / edit / session / done / err."""
+    model = model or MODEL
     env = dict(os.environ)
     env["OPENROUTER_API_KEY"] = OPENCODE_API_KEY
-    cmd = [OC_BIN, "run", *oc_args(mode, session), prompt]
+    # opencode определяет рабочий каталог по переменной PWD, а не по cwd процесса.
+    # Без этого он пишет файлы в каталог запуска моста, а не в песочницу.
+    env["PWD"] = WS
+    env["OLDPWD"] = WS
+    cmd = [OC_BIN, "run", *oc_args(mode, session, model), prompt]
     log(f"запуск агента [{mode}]: {prompt[:80]}")
     try:
         proc = subprocess.Popen(cmd, cwd=WS, env=env, stdout=subprocess.PIPE,
@@ -353,9 +439,18 @@ def stream_agent(chat: str, prompt: str, mode: str, session: str):
                 d = json.loads(line)
             except ValueError:
                 continue
+            if d.get("type") == "error":
+                err = d.get("error") or {}
+                msg = (err.get("data") or {}).get("message") or err.get("name") or str(err)
+                yield "err", f"opencode: {msg}"
+                continue
             part = d.get("part", {}) or {}
             if d.get("type") == "text" and part.get("text"):
                 yield "text", part["text"]
+            if part.get("type") == "tool" and part.get("tool") in ("edit", "write", "patch"):
+                st = part.get("state", {}) or {}
+                if st.get("status") == "completed":
+                    yield "edit", str(st.get("input", {}).get("filePath", ""))
             if part.get("sessionID") and not session:
                 yield "session", part["sessionID"]
             if time.time() - start > RUN_TIMEOUT:
@@ -376,6 +471,43 @@ def stream_agent(chat: str, prompt: str, mode: str, session: str):
     finally:
         with PROCS_LOCK:
             PROCS.pop(chat, None)
+
+
+OVERLOAD_WORDS = ("overload", "503", "429", "temporarily", "rate limit",
+                  "unavailable", "server error", "capacity")
+
+
+def stream_agent(chat: str, prompt: str, mode: str, session: str, model: str = ""):
+    """Запускает агента, перебирая модели при перегрузке провайдера.
+
+    Отдаёт: ('model', имя) при попытке, ('retry', текст) при переключении,
+    затем события от рабочей модели: text / edit / session / done / err.
+    """
+    models = agent_models()
+    if model and model in models:
+        models.remove(model)
+        models.insert(0, model)
+    last_err = ""
+    for idx, m in enumerate(models):
+        yield "model", m
+        wrote_text = False
+        for kind, val in _run_one(chat, prompt, mode, session, m):
+            if kind == "text":
+                wrote_text = True
+                yield kind, val
+            elif kind in ("session", "edit", "done"):
+                yield kind, val
+            elif kind == "err":
+                last_err = val
+        if wrote_text:
+            return
+        if idx < len(models) - 1:
+            over = any(w in last_err.lower() for w in OVERLOAD_WORDS)
+            yield "retry", (f"{m} не ответила ({last_err or 'пусто'}) — "
+                            f"пробую {models[idx + 1]}")
+            time.sleep(6 if over else 2)
+    if last_err:
+        yield "err", f"все модели не ответили, последняя ошибка: {last_err}"
 
 
 def autocommit(chat: str, prompt: str) -> str:
@@ -403,42 +535,48 @@ def autocommit(chat: str, prompt: str) -> str:
 
 
 def handle_prompt(chat: str, prompt: str) -> None:
-    """Выполняет одну задачу в фоне."""
-    with WORK:
-        st = STORE.get(chat)
-        session = st.get("session") or ""
-        mode = st.get("mode", MODE_CHAT)
-        head = "💬 Общаюсь" if mode == MODE_CHAT else "🛠 Работаю"
-        msg_id = send(chat, f"{head}…\n<i>Запрос принят, жди ответа. "
-                            f"Если задача сложная — это может занять минуту.</i>")
-        buf, last_send = "", time.time()
-        final, error = None, None
-        for kind, val in stream_agent(chat, prompt, mode, session):
-            if kind == "text":
-                buf = val
-                if time.time() - last_send > UPDATE_EVERY:
-                    edit(chat, msg_id, f"{head}…\n{buf}")
-                    last_send = time.time()
-            elif kind == "session":
-                STORE.set(chat, session=val)
-            elif kind == "done":
-                final = val
-            elif kind == "err":
-                error = val
-        if buf.strip():
-            parts = chunk(buf)
-            edit(chat, msg_id, parts[0])
-            for extra in parts[1:]:
-                send(chat, extra)
-        else:
-            text = error or ("⚠️ Агент не вернул текст. Попробуй переформулировать "
-                             "или нажми «Новый диалог».")
-            edit(chat, msg_id, text)
-        if error and buf.strip():
-            send(chat, f"⚠️ {error}")
-        STORE.set(chat, last=prompt[:200], busy=False)
-        if mode == MODE_TASK:
-            send(chat, autocommit(chat, prompt))
+    """Выполняет одну задачу. busy сбрасывается при ЛЮБОМ исходе — иначе чат
+    навсегда залипнет, а сообщения уйдут в очередь, которую никто не разгребает."""
+    mode = MODE_CHAT
+    msg_id = None
+    try:
+        with WORK:
+            st = STORE.get(chat)
+            mode = st.get("mode", MODE_CHAT)
+            session = st.get("session") or ""
+            head = "\U0001f4ac Общаюсь" if mode == MODE_CHAT else "\U0001f6e0 Работаю"
+            msg_id = send(chat, f"{head}…\n<i>Запрос принят. Сложная задача может "
+                                f"занять минуту-две.</i>")
+            buf, error, last_send, used = "", None, time.time(), ""
+            for kind, val in stream_agent(chat, prompt, mode, session):
+                if kind == "text":
+                    buf = val
+                    if time.time() - last_send > UPDATE_EVERY:
+                        edit(chat, msg_id, f"{head}…\n{buf}")
+                        last_send = time.time()
+                elif kind == "session":
+                    STORE.set(chat, session=val)
+                elif kind == "model":
+                    used = val
+                elif kind == "retry":
+                    log(val)
+                    edit(chat, msg_id, "⏳ Провайдер перегружен, пробую резервную модель…")
+                elif kind == "err":
+                    error = val
+            if buf.strip() and used:
+                log(f"ответила модель {used}")
+            if mode == MODE_TASK:
+                send(chat, autocommit(chat, prompt))
+            STORE.set(chat, last=prompt[:200])
+    except Exception as e:  # noqa: BLE001
+        log(f"СБОЙ обработки запроса: {type(e).__name__}: {e}")
+        try:
+            send(chat, f"⚠️ Внутренняя ошибка моста: {type(e).__name__}.\n"
+                       f"Попробуй ещё раз. Если повторяется — команда /diag")
+        except Exception:  # noqa: BLE001
+            pass
+    finally:
+        STORE.set(chat, busy=False)
         _start_next(chat)
 
 
@@ -500,6 +638,8 @@ def on_text(chat: str, text: str) -> None:
         send(chat, TXT_HELP, menu=True)
     elif low in ("/who", "/кто", "что ты умеешь"):
         send(chat, TXT_WHO)
+    elif low in ("/diag", "/диаг", "диагностика"):
+        send(chat, txt_diag(chat))
     elif low in ("/status", "статус", "/статус"):
         send(chat, txt_status(chat), menu=True)
     elif low in ("/new", "/новая", "новый диалог"):
@@ -837,8 +977,68 @@ def dry_run() -> int:
     return 0
 
 
+def once(prompt: str, mode: str) -> int:
+    """Прогон одной задачи без Telegram. Показывает, где именно отказ:
+    конфигурация -> запуск opencode -> ответ модели."""
+    print("=== ПРОГОН БЕЗ TELEGRAM ===")
+    print(f"opencode: {OC_BIN}")
+
+    def show(name: str, ok: bool, detail: str = "") -> bool:
+        print(f"  {'PASS' if ok else 'FAIL'} {name}" + (f" — {detail}" if detail else ""))
+        return ok
+
+    if not show("ключ OpenRouter", bool(OPENCODE_API_KEY)):
+        return 1
+    if not show("opencode.json в песочнице", os.path.isfile(os.path.join(WS, "opencode.json"))):
+        return 1
+    try:
+        ver = subprocess.run([OC_BIN, "--version"], capture_output=True, text=True,
+                             timeout=30).stdout.strip()
+        show("opencode отвечает", bool(ver), ver)
+    except Exception as e:  # noqa: BLE001
+        show("opencode отвечает", False, f"{type(e).__name__}: {e}")
+        return 1
+    print(f"  режим: {mode}, модель: {MODEL}")
+    print("  запускаю задачу…")
+    got_text, got_err, edits = "", "", []
+    for kind, val in stream_agent("once", prompt, mode, ""):
+        if kind == "model":
+            print(f"  пробую модель: {val.split('/')[-1]}")
+        elif kind == "retry":
+            print(f"  ↪ {val}")
+        elif kind == "text":
+            got_text = val
+            print(f"  … получен текст ({len(val)} симв.)")
+        elif kind == "edit":
+            edits.append(val)
+            print(f"  … записан файл: {val}")
+        elif kind == "err":
+            got_err = val
+            print(f"  … ошибка: {val}")
+    if edits:
+        for f in edits:
+            print(f"  файл на диске: {os.path.exists(f)} — {f}")
+    print()
+    if got_text.strip():
+        print("--- ОТВЕТ АГЕНТА ---")
+        print(got_text[:1500])
+        print("--- ИТОГ: агент работает ---")
+        return 0
+    print("--- ИТОГ: агент НЕ ответил ---")
+    print(got_err or "(ошибки нет, но и текста нет)")
+    return 1
+
+
 if __name__ == "__main__":
     arg = sys.argv[1] if len(sys.argv) > 1 else ""
+    if arg == "--once":
+        rest = sys.argv[2:]
+        m = MODE_CHAT
+        if "--mode" in rest:
+            i = rest.index("--mode")
+            m = rest[i + 1] if i + 1 < len(rest) else MODE_CHAT
+            rest = rest[:i] + rest[i + 2:]
+        sys.exit(once(" ".join(rest) or "Привет! Ответь одним предложением.", m))
     if arg == "--dry-run":
         sys.exit(dry_run())
     if arg == "--check":

@@ -121,7 +121,7 @@
   "agent": {
     "chat": {
       "description": "Режим общения: читает файлы песочницы, отвечает, ничего не меняет",
-      "mode": "all",
+      "mode": "primary",
       "permission": {
         "edit": "deny",
         "bash": "deny",
