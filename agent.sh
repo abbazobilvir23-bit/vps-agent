@@ -47,7 +47,13 @@ fi
 [ -n "$MSG" ] || { echo "usage: bash agent.sh [--continue|--new|--session ID] \"задача\"" >&2; exit 2; }
 
 cd "$WS"
-ARGS=(--standalone --auto --format json --model "$MODEL")
+# v1: --pure вместо --standalone; v2: --standalone. Определяем по версии.
+OC_MAJOR="$("$OC" --version 2>/dev/null | tr -dc '0-9' | cut -c1)"
+if [ "${OC_MAJOR:-1}" -ge 2 ] 2>/dev/null; then
+  ARGS=(--standalone --auto --format json --model "$MODEL")
+else
+  ARGS=(--pure --auto --format json --model "$MODEL")
+fi
 case "$MODE" in
   continue) [ -s "$SESSION" ] && ARGS+=(--session "$(cat "$SESSION")") || echo "(сессии нет — начну новую)" >&2 ;;
   session)  ARGS+=(--session "$SID") ;;

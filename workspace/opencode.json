@@ -1,485 +1,109 @@
 {
   "$schema": "https://opencode.ai/config.json",
   "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
-  "permissions": [
-    {
-      "action": "execute",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "question",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "external_directory",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "webfetch",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "websearch",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "skill",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "subagent",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "/root/mpf/*",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "/etc/*",
-      "effect": "deny"
-    },
-    {
-      "action": "edit",
-      "resource": "/root/mpf/*",
-      "effect": "deny"
-    },
-    {
-      "action": "edit",
-      "resource": "/etc/*",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "*.env",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "*.env.*",
-      "effect": "deny"
-    },
-    {
-      "action": "edit",
-      "resource": "*.env",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "*.pem",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "*id_rsa*",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "*.key",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "git status*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git diff*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git log*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git show*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git add*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git commit*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git branch*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git init*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git stash*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "git checkout*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "ls*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "pwd*",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "cat *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "head *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "tail *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "wc *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "grep *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "rg *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "find *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "which *",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "date",
-      "effect": "allow"
-    },
-    {
-      "action": "shell",
-      "resource": "*sudo *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*rm -rf*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*rm -f /*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*mkfs*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*dd if=*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*chmod 777*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*chown -R /*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*/etc/*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*/root/mpf*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*/root/agent/env*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*/.ssh*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*/.opencode*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*iptables*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*ip6tables*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*nft *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*ip route*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*ip link*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*ip addr*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*ifconfig*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*route *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*resolv*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*nmcli*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*ufw*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*firewall*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*wg *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*wg-quick*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*openvpn*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*xray*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*sing-box*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*systemctl*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*service *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*sysctl*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*modprobe*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*insmod*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*docker*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*reboot*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*shutdown*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*poweroff*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*halt*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*pkill*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*killall*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*kill *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*curl*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*wget*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*ssh *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*scp *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*nc *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*crontab*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*apt*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*dpkg*",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*pip *",
-      "effect": "deny"
-    },
-    {
-      "action": "shell",
-      "resource": "*npm *",
-      "effect": "deny"
-    },
-    {
-      "action": "read",
-      "resource": "*",
-      "effect": "allow"
-    },
-    {
-      "action": "edit",
-      "resource": "*",
-      "effect": "allow"
-    },
-    {
-      "action": "glob",
-      "resource": "*",
-      "effect": "allow"
-    },
-    {
-      "action": "grep",
-      "resource": "*",
-      "effect": "allow"
+  "permission": {
+    "question": "deny",
+    "webfetch": "deny",
+    "websearch": "deny",
+    "skill": "deny",
+    "task": "deny",
+    "doom_loop": "deny",
+    "lsp": "deny",
+    "external_directory": "deny",
+    "read": {
+      "*": "allow",
+      "/root/mpf/*": "deny",
+      "/etc/*": "deny",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.pem": "deny",
+      "*id_rsa*": "deny",
+      "*.key": "deny"
+    },
+    "edit": {
+      "*": "allow",
+      "/root/mpf/*": "deny",
+      "/etc/*": "deny",
+      "*.env": "deny"
+    },
+    "glob": "allow",
+    "grep": "allow",
+    "bash": {
+      "*": "deny",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "git show*": "allow",
+      "git add*": "allow",
+      "git commit*": "allow",
+      "git branch*": "allow",
+      "git init*": "allow",
+      "git stash*": "allow",
+      "git checkout*": "allow",
+      "ls*": "allow",
+      "pwd*": "allow",
+      "cat *": "allow",
+      "head *": "allow",
+      "tail *": "allow",
+      "wc *": "allow",
+      "grep *": "allow",
+      "rg *": "allow",
+      "find *": "allow",
+      "which *": "allow",
+      "date": "allow",
+      "*sudo *": "deny",
+      "*rm -rf*": "deny",
+      "*rm -f /*": "deny",
+      "*mkfs*": "deny",
+      "*dd if=*": "deny",
+      "*chmod 777*": "deny",
+      "*chown -R /*": "deny",
+      "*/etc/*": "deny",
+      "*/root/mpf*": "deny",
+      "*/root/agent/env*": "deny",
+      "*/.ssh*": "deny",
+      "*/.opencode*": "deny",
+      "*iptables*": "deny",
+      "*ip6tables*": "deny",
+      "*nft *": "deny",
+      "*ip route*": "deny",
+      "*ip link*": "deny",
+      "*ip addr*": "deny",
+      "*ifconfig*": "deny",
+      "*route *": "deny",
+      "*resolv*": "deny",
+      "*nmcli*": "deny",
+      "*ufw*": "deny",
+      "*firewall*": "deny",
+      "*wg *": "deny",
+      "*wg-quick*": "deny",
+      "*openvpn*": "deny",
+      "*xray*": "deny",
+      "*sing-box*": "deny",
+      "*systemctl*": "deny",
+      "*service *": "deny",
+      "*sysctl*": "deny",
+      "*modprobe*": "deny",
+      "*insmod*": "deny",
+      "*docker*": "deny",
+      "*reboot*": "deny",
+      "*shutdown*": "deny",
+      "*poweroff*": "deny",
+      "*halt*": "deny",
+      "*pkill*": "deny",
+      "*killall*": "deny",
+      "*kill *": "deny",
+      "*curl*": "deny",
+      "*wget*": "deny",
+      "*ssh *": "deny",
+      "*scp *": "deny",
+      "*nc *": "deny",
+      "*crontab*": "deny",
+      "*apt*": "deny",
+      "*dpkg*": "deny",
+      "*pip *": "deny",
+      "*npm *": "deny"
     }
-  ],
-  "experimental": {
-    "portable_shell_scanner": true
   },
   "providers": {
     "openrouter": {

@@ -10,7 +10,7 @@ APP="$ROOT/app"
 WS="$ROOT/workspace"
 ENVF="$ROOT/env"
 SESSION="$ROOT/session"
-OC_VERSION="2.0.18"
+OC_VERSION="1.18.33"   # v2 не публикуется в GitHub Releases, доступна только линия v1.x
 MODEL_DEFAULT="openrouter/nvidia/nemotron-3-ultra-550b-a55b:free"
 
 say() { printf '\n\033[1;36m==> %s\033[0m\n' "$1"; }
@@ -27,19 +27,20 @@ chmod 700 "$ROOT"
 echo "   $ROOT готов"
 
 say "2/6 OpenCode $OC_VERSION"
-OC=""
 if [ -n "${OPENCODE_BIN:-}" ] && [ -x "$OPENCODE_BIN" ]; then
   OC="$OPENCODE_BIN"
   echo "   задан OPENCODE_BIN: $OC ($("$OC" --version))"
-elif [ -x "$HOME/.opencode/bin/opencode" ] && "$HOME/.opencode/bin/opencode" --version 2>/dev/null | grep -q "$OC_VERSION"; then
-  OC="$HOME/.opencode/bin/opencode"
-  echo "   уже установлен: $("$OC" --version)"
 else
-  curl -fsSL https://opencode.ai/install | bash -s -- --version "$OC_VERSION" --no-modify-path
   OC="$HOME/.opencode/bin/opencode"
+  if [ -x "$OC" ] && "$OC" --version 2>/dev/null | grep -q "$OC_VERSION"; then
+    echo "   уже установлен: $("$OC" --version)"
+  else
+    bash "$APP/install_opencode.sh" "$OC_VERSION" "$HOME/.opencode/bin" \
+      || die "не удалось поставить opencode $OC_VERSION — разберись по логу выше"
+  fi
 fi
 [ -x "$OC" ] || OC="$(command -v opencode || true)"
-[ -x "$OC" ] || die "opencode не установился"
+[ -x "$OC" ] || die "opencode не найден"
 echo "   бинарь: $OC ($("$OC" --version))"
 
 say "3/6 Конфигурация агента в $WS"
