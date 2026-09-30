@@ -110,6 +110,24 @@ chmod 600 "$ROOT/agent.env"
 [ -f "$SESSION" ] || : > "$SESSION"
 chmod 600 "$SESSION"
 
+say "7/7 Telegram-мост"
+if command -v python3 >/dev/null 2>&1; then
+  echo "   python3: $(python3 --version 2>&1)"
+  if python3 "$APP/bridge/bot.py" --self-test >/dev/null 2>&1; then
+    echo "   тесты моста: пройдены"
+  else
+    warn "тесты моста не пройдены — смотри: python3 $APP/bridge/bot.py --self-test"
+  fi
+  if python3 "$APP/bridge/bot.py" --check >/dev/null 2>&1; then
+    echo "   конфигурация моста: в порядке"
+  else
+    warn "токен бота не задан — мост не запустится."
+    echo "     Задай токен и повтори setup.sh (инструкция ниже)."
+  fi
+else
+  warn "python3 не найден — Telegram-мост работать не будет"
+fi
+
 say "Готово"
 
 # --- проверки, чтобы не гадать ---
@@ -132,6 +150,12 @@ cat <<EOF
   2) bash $APP/agent.sh "Создай README.md с описанием проекта"
   3) bash $APP/agent.sh --continue "Теперь добавь раздел установки"
   4) bash $APP/agent.sh --new "Другая задача"
+
+Telegram-мост (после того как задашь токен бота):
+  bash $APP/bridge/run.sh start      запустить
+  bash $APP/bridge/run.sh status     проверить
+  bash $APP/bridge/run.sh cron       сторож, чтобы поднимался сам
+  bash $APP/bridge/run.sh log        журнал
 
 Если захочешь вызывать opencode напрямую, добавь в PATH:
   export PATH="\$HOME/.opencode/bin:\$PATH"

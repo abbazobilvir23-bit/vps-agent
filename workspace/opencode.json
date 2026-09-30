@@ -3,8 +3,8 @@
   "model": "openrouter/nvidia/nemotron-3-ultra-550b-a55b:free",
   "permission": {
     "question": "deny",
-    "webfetch": "deny",
-    "websearch": "deny",
+    "webfetch": "allow",
+    "websearch": "allow",
     "skill": "deny",
     "task": "deny",
     "doom_loop": "deny",
@@ -115,6 +115,31 @@
             "output": 65536
           }
         }
+      }
+    }
+  },
+  "agent": {
+    "chat": {
+      "description": "Режим общения: читает файлы песочницы, отвечает, ничего не меняет",
+      "mode": "all",
+      "permission": {
+        "edit": "deny",
+        "bash": "deny",
+        "task": "deny",
+        "question": "deny",
+        "external_directory": "deny",
+        "read": {
+          "*": "allow",
+          "*.env": "deny",
+          "*.env.*": "deny",
+          "*.pem": "deny",
+          "*.key": "deny",
+          "*id_rsa*": "deny"
+        },
+        "glob": "allow",
+        "grep": "allow",
+        "webfetch": "allow",
+        "websearch": "allow"
       }
     }
   }
