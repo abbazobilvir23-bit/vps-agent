@@ -558,26 +558,39 @@ def check_config() -> list[str]:
 
 
 def poll_loop(offset: int) -> None:
+    webhook_conflicts = 0
     while True:
         res = api("getUpdates", {"timeout": 45, "offset": offset,
                                 "allowed_updates": json.dumps(
                                     ["message", "callback_query"])}, timeout=70)
         if not res.get("ok"):
             desc = str(res.get("description", "?"))
-            if "terminated by other getUpdates" in desc:
-                # второй опросчик забрал long poll — это не поломка, просто ждём
-                log("второй опросчик забрал getUpdates (вероятно, дубль процесса) — жду")
-                time.sleep(3)
+            if "terminated by getWebhook request" in desc:
+                # кто-то (в т.ч. наш же deleteWebhook) дёрнул getWebhook во время опроса
+                log("прервано запросом getWebhook — повторяю через 5с")
+                time.sleep(5)
                 continue
-            if "webhook" in desc or "Conflict" in desc:
-                log(f"getUpdates: {desc}")
-                if drop_webhook("getUpdates вернул 409"):
+            if "terminated by other getUpdates request" in desc:
+                # дубль процесса забрал long poll; от этого защищает flock
+                log("второй опросчик забрал getUpdates — повторяю через 5с")
+                time.sleep(5)
+                continue
+            if "webhook is active" in desc:
+                webhook_conflicts += 1
+                if webhook_conflicts <= 3:
+                    log(f"webhook активен (попытка {webhook_conflicts}) — снимаю")
+                    drop_webhook("webhook активен")
+                    time.sleep(3)
                     continue
+                log("webhook постоянно возвращается — его кто-то ставит заново. "
+                    "Найди того, кто это делает; снять руками: "
+                    "https://api.telegram.org/bot<ТОКЕН>/deleteWebhook")
                 time.sleep(30)
                 continue
             log(f"getUpdates не удался: {desc}")
             time.sleep(5 if "429" in desc else 15)
             continue
+        webhook_conflicts = 0
         for upd in res.get("result", []):
             offset = upd["update_id"] + 1
             try:
@@ -614,9 +627,26 @@ def acquire_lock() -> bool:
         return False
 
 
+def reset_stale_state() -> None:
+    """После перезапуска ни одна задача не выполняется. Если busy остался True,
+    сообщения копятся в очереди вечно и никто их не разгребает."""
+    dirty = False
+    with STORE.lock:
+        for chat, st in STORE.data.items():
+            if st.get("busy") or st.get("queue"):
+                log(f"сбрасываю зависшую очередь чата {chat} "
+                    f"(busy={st.get('busy')}, в очереди {len(st.get('queue') or [])})")
+                st["busy"] = False
+                st["queue"] = []
+                dirty = True
+        if dirty:
+            STORE._save()
+
+
 def main() -> int:
     if not acquire_lock():
         return 0
+    reset_stale_state()
     problems = check_config()
     if problems:
         log("КОНФИГУРАЦИЯ НЕПОЛНАЯ:")
@@ -752,6 +782,21 @@ def self_test() -> int:
         globals()["send"] = real_send
         globals()["STORE"] = real_store
         os.path.exists(tmp_state) and os.remove(tmp_state)
+
+    # --- зависшая очередь после перезапуска ---
+    globals()["STORE"] = Store(tmp_state)
+    STORE.set("99", busy=True)
+    STORE.get("99")["queue"].append("старая задача")
+    globals()["STORE"].set("98", busy=False, queue=[])
+    globals()["STORE"]._save()
+    reset_stale_state()
+    after = Store(tmp_state)
+    check("зависший busy сбрасывается при старте",
+          not after.get("99")["busy"] and after.get("99")["queue"] == [])
+    check("сброс не трогает пустые чаты",
+          after.get("98")["queue"] == [] and not after.get("98")["busy"])
+    globals()["STORE"] = real_store
+    os.path.exists(tmp_state) and os.remove(tmp_state)
 
     print(f"\n{'ВСЁ ОК' if not fails else str(fails) + ' ПРОВАЛОВ'}")
     return 1 if fails else 0
