@@ -50,33 +50,48 @@ cp -f "$APP/workspace/AGENTS.md"    "$WS/AGENTS.md"
 echo "   opencode.json и AGENTS.md скопированы"
 
 say "4/6 Git-репозиторий песочницы"
-cd "$WS"
+# На этом VPS git ругается "dubious ownership" (та же история, что была с /root/mpf).
+# Разрешаем каталог явно и НЕ роняем установку, если git всё-таки споткнёлся.
+git config --global --add safe.directory "$WS" 2>/dev/null || true
+git config --global --add safe.directory "$APP" 2>/dev/null || true
+cd "$WS" || die "не удалось перейти в $WS"
 if [ ! -d .git ]; then
-  git init -q
-  git config user.email "agent@localhost"
-  git config user.name  "vps-agent"
+  git init -q 2>/dev/null || warn "git init не удался (продолжаю)"
 fi
-if [ -n "$(git status --porcelain 2>/dev/null || true)" ]; then
-  git add -A
-  git commit -q -m "песочница: базовая настройка" || true
+git config user.email "agent@localhost" 2>/dev/null || true
+git config user.name  "vps-agent"       2>/dev/null || true
+if git status --porcelain >/dev/null 2>&1 && [ -n "$(git status --porcelain 2>/dev/null)" ]; then
+  git add -A 2>/dev/null || true
+  git commit -q -m "песочница: базовая настройка" 2>/dev/null || true
 fi
-echo "   репозиторий: $(git rev-parse --short HEAD 2>/dev/null || echo 'пусто')"
+if git rev-parse --short HEAD >/dev/null 2>&1; then
+  echo "   репозиторий: $(git rev-parse --short HEAD)"
+else
+  warn "git в песочнице не работает — агент сможет писать файлы, но без истории/отката"
+fi
 
 say "5/6 Секреты ($ENVF, права 600)"
 if [ ! -f "$ENVF" ]; then
-  echo "   Сейчас спроси OpenRouter API key. Он не попадёт в git и не в историю shell."
-  read -rsp "   Вставь OPENROUTER_API_KEY и нажми Enter: " KEY; echo
-  if [ -z "$KEY" ]; then
-    warn "Ключ не введён — агент не сможет работать. Потом заполни руками: $ENVF"
+  if [ -t 0 ]; then
+    echo "   Сейчас спроси OpenRouter API key. Он не отображается при вводе и не попадёт"
+    echo "   ни в git, ни в историю shell. Вставь ключ и нажми Enter."
+    read -rsp "   OpenRouter API key: " KEY; echo
+  else
+    warn "нет TTY (вставка нескольких команд сразу). Создаю файл без ключа."
+    KEY=""
+  fi
+  if [ -z "${KEY:-}" ]; then
+    warn "Ключ пуст. Впиши его одной командой:"
+    echo "     sed -i 's|^OPENROUTER_API_KEY=.*|OPENROUTER_API_KEY=ТВОЙ_КЛЮЧ|' $ENVF"
   fi
   {
-    [ -n "${KEY:-}" ] && echo "OPENROUTER_API_KEY=$KEY"
-    echo "# сюда позже добавим TELEGRAM_BOT_TOKEN (фаза 2)"
+    echo "OPENROUTER_API_KEY=${KEY:-}"
+    echo "# Фаза 2: сюда добавим TELEGRAM_BOT_TOKEN"
     echo "TELEGRAM_BOT_TOKEN="
   } > "$ENVF"
   chmod 600 "$ENVF"
   unset KEY
-  echo "   записано"
+  echo "   записано в $ENVF (права 600)"
 else
   echo "   уже существует, не трогаю"
 fi
@@ -95,22 +110,30 @@ chmod 600 "$ROOT/agent.env"
 chmod 600 "$SESSION"
 
 say "Готово"
+
+# --- проверки, чтобы не гадать ---
+KEYSET="нет"
+if grep -qE '^OPENROUTER_API_KEY=.+' "$ENVF" 2>/dev/null; then KEYSET="да"; fi
+GITOK="нет"; cd "$WS" 2>/dev/null && git rev-parse --short HEAD >/dev/null 2>&1 && GITOK="да"
+
 cat <<EOF
 
-Агент установлен. Что где:
-  $OC                  — сам OpenCode
-  $WS            — папка-песочница (git-репозиторий агента)
-  $WS/opencode.json  — правила доступа (песочница, запреты)
-  $WS/AGENTS.md       — инструкция агенту
-  $ENVF            — секреты (600)
-  $SESSION         — id текущей сессии
+Проверка установки:
+  opencode:   $("$OC" --version 2>/dev/null || echo "НЕ РАБОТАЕТ")
+  opencode:   $OC
+  ключ API:   $KEYSET
+  git в песочнице: $GITOK
+  песочница:  $WS
+  секреты:    $ENVF
 
-Дальше:
-  1) Проверь безопасность:   bash $APP/smoke.sh
-  2) Первая задача:          bash $APP/agent.sh "Создай README.md с описанием проекта"
-  3) Продолжить диалог:      bash $APP/agent.sh --continue "Теперь добавь раздел установки"
-  4) Новая сессия:           bash $APP/agent.sh --new "Другая задача"
+Дальше (по одной команде, НЕ вставляй всё сразу):
+  1) bash $APP/smoke.sh
+  2) bash $APP/agent.sh "Создай README.md с описанием проекта"
+  3) bash $APP/agent.sh --continue "Теперь добавь раздел установки"
+  4) bash $APP/agent.sh --new "Другая задача"
+
+Если захочешь вызывать opencode напрямую, добавь в PATH:
+  export PATH="\$HOME/.opencode/bin:\$PATH"
 
 Торговый бот в /root/mpf агент не видит и не может изменить.
-
 EOF
