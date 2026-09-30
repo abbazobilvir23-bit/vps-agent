@@ -62,6 +62,12 @@ stop() {
   done
   kill -0 "$pid" 2>/dev/null && kill -KILL "$pid" 2>/dev/null || true
   rm -f "$PIDF"
+  # убираем возможные осиротевшие дубли (по пути к скрипту, не по имени)
+  pkill -f "$HERE/bot.py" 2>/dev/null || true
+  sleep 1
+  if pgrep -f "$HERE/bot.py" >/dev/null 2>&1; then
+    pkill -9 -f "$HERE/bot.py" 2>/dev/null || true
+  fi
   ok "мост остановлен"
 }
 

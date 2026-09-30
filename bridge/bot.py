@@ -16,6 +16,7 @@
 """
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import shlex
@@ -35,6 +36,7 @@ ENV_FILE = os.path.join(ROOT, "env")
 AGENT_ENV = os.path.join(ROOT, "agent.env")
 STATE_FILE = os.path.join(ROOT, "bridge_state.json")
 LOG_FILE = os.path.join(ROOT, "bridge.log")
+LOCK_FILE = os.path.join(ROOT, "bridge.lock")
 TELEGRAM = "https://api.telegram.org"
 MAX_TG = 4000
 RUN_TIMEOUT = 1800
@@ -157,6 +159,22 @@ def api(method: str, payload: dict | None = None, timeout: int = 60) -> dict:
             return {"ok": False, "description": f"HTTP {e.code}: {body[:120]}"}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "description": f"{type(e).__name__}: {e}"}
+
+
+WEBHOOK_DROPPED = False
+
+
+def drop_webhook(reason: str = "") -> bool:
+    """Снимает webhook. Пока он включён, getUpdates отдаёт 409 Conflict."""
+    global WEBHOOK_DROPPED
+    res = api("deleteWebhook", {"drop_pending_updates": "false"})
+    if res.get("ok"):
+        WEBHOOK_DROPPED = True
+        log(f"webhook снят{' (' + reason + ')' if reason else ''} — можно читать сообщения")
+        time.sleep(3)   # удаление распространяется по фронтендам Telegram не мгновенно
+        return True
+    log(f"не удалось снять webhook: {res.get('description')}")
+    return False
 
 
 def chunk(text: str) -> list[str]:
@@ -545,9 +563,20 @@ def poll_loop(offset: int) -> None:
                                 "allowed_updates": json.dumps(
                                     ["message", "callback_query"])}, timeout=70)
         if not res.get("ok"):
-            desc = res.get("description", "?")
+            desc = str(res.get("description", "?"))
+            if "terminated by other getUpdates" in desc:
+                # второй опросчик забрал long poll — это не поломка, просто ждём
+                log("второй опросчик забрал getUpdates (вероятно, дубль процесса) — жду")
+                time.sleep(3)
+                continue
+            if "webhook" in desc or "Conflict" in desc:
+                log(f"getUpdates: {desc}")
+                if drop_webhook("getUpdates вернул 409"):
+                    continue
+                time.sleep(30)
+                continue
             log(f"getUpdates не удался: {desc}")
-            time.sleep(5 if "409" in str(desc) else 15)
+            time.sleep(5 if "429" in desc else 15)
             continue
         for upd in res.get("result", []):
             offset = upd["update_id"] + 1
@@ -568,7 +597,26 @@ def poll_loop(offset: int) -> None:
                 log(f"ошибка обработки апдейта: {type(e).__name__}: {e}")
 
 
+LOCK_FH = None
+
+
+def acquire_lock() -> bool:
+    """Один экземпляр на файл-лок. Второй молча выйдет, а не будет драться за getUpdates."""
+    global LOCK_FH
+    try:
+        LOCK_FH = open(LOCK_FILE, "w")
+        fcntl.flock(LOCK_FH, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        LOCK_FH.write(str(os.getpid()))
+        LOCK_FH.flush()
+        return True
+    except (OSError, IOError) as e:
+        log(f"другой экземпляр моста уже работает ({type(e).__name__}) — выхожу")
+        return False
+
+
 def main() -> int:
+    if not acquire_lock():
+        return 0
     problems = check_config()
     if problems:
         log("КОНФИГУРАЦИЯ НЕПОЛНАЯ:")
@@ -583,6 +631,8 @@ def main() -> int:
             log(f"подключён как @{me['result'].get('username', '?')}")
         else:
             log(f"getMe не удался: {me.get('description')}")
+        if me.get("ok"):
+            drop_webhook("перед стартом опроса")
 
     def shutdown(_sig, _frm):
         log("завершаюсь")
